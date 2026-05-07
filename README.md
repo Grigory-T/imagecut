@@ -1,11 +1,11 @@
 # Imagecut
 
-Small dependency-free Python module for choosing integer-pixel vertical cut
-positions while avoiding forbidden x-coordinate zones.
+Small dependency-free Python module for choosing integer before-pixel vertical
+cut positions while avoiding forbidden before-pixel coordinates.
 
 The optimizer is a fast heuristic, not an exact global optimizer. It starts from
-equal-width cuts, snaps them to allowed pixels, improves one cut at a time, and
-tries several nearby part counts.
+equal-width cuts, snaps them to allowed before-pixel coordinates, improves one
+cut at a time, and tries several nearby part counts.
 
 ## Function
 
@@ -25,21 +25,41 @@ print(result["cuts"])
 Main output:
 
 ```python
-result["cuts"]  # list[int]
+result["cuts"]  # list[int], before-pixel cut coordinates
 ```
+
+## Pixel/Cut Convention
+
+This is the core convention used everywhere in the repo:
+
+- All pixel numbering is zero-based.
+- Pixels are indexed `0, 1, ..., width - 1`.
+- A returned cut value `x` means: insert the vertical cut **before pixel `x`**.
+- Therefore `x=55` means the cut is between pixel `54` and pixel `55`.
+- Valid internal cuts are `1, 2, ..., normalized_width - 1`.
+- `x=0` would mean "cut before pixel `0`"; this is the left image boundary,
+  so it is not a valid internal cut and is never returned.
+- `x=normalized_width - 1` means "cut before the last pixel"; this is a valid
+  internal cut.
+- `x=normalized_width` is the right image boundary, not an internal cut.
+- If the previous cut is `previous_cut`, then a cut before pixel `x` creates a
+  part width of `x - previous_cut`.
+- Example: cuts `[106, 203]` on width `300` create part widths
+  `[106, 97, 97]`: pixels `0..105`, `106..202`, and `203..299`.
 
 ## Required Inputs
 
 - `width: int | float`
   Full image width in pixels. Must be finite and positive. It is rounded to the
   nearest integer pixel before optimization. Valid internal cut coordinates are
-  `1, 2, ..., normalized_width - 1`.
+  before-pixel values `1, 2, ..., normalized_width - 1`.
 - `height: int | float`
   Full image height in pixels. Must be finite and positive. It is rounded to the
   nearest integer pixel before optimization.
 - `forbidden_zones`
-  Horizontal x-coordinate ranges where cuts are not allowed. Several common
-  input shapes are accepted; all are normalized to integer inclusive intervals.
+  Horizontal ranges of pixels before which cuts are not allowed. Several common
+  input shapes are accepted; all are normalized to integer inclusive
+  before-pixel intervals.
 - `target_ratio: float`
   Desired aspect ratio for every part, defined as `height / part_width`. Must be
   finite and positive. For example, normalized `height=100` and
@@ -55,7 +75,8 @@ Dimension conversion:
 
 ## Forbidden Zone Contract
 
-`forbidden_zones` is the important input boundary.
+`forbidden_zones` is the important input boundary. A forbidden zone contains the
+pixel indices **before which** a cut cannot be inserted.
 
 Accepted zone input forms:
 
@@ -89,18 +110,21 @@ Normalization rules:
 - Pair order is not important. `(105, 95)` is accepted and normalized.
 - Coordinates must be finite numeric values; `NaN` and infinite values are
   rejected.
-- Coordinates use the same x-axis as the image: left edge `0`, right edge
-  `width`.
-- Valid cut positions are only internal integer pixels:
+- Coordinates use the image pixel x-axis: pixels are `0..normalized_width-1`.
+- A coordinate `x` means the candidate cut before pixel `x`, not a cut through
+  pixel `x`.
+- Valid cut positions are only internal before-pixel coordinates:
   `1..normalized_width-1`.
-- Forbidden zones are inclusive for integer cut coordinates.
-- Example: `(5, 8)` forbids cuts at `5, 6, 7, 8`.
-- Float endpoints are allowed. Integer cut `x` is forbidden when
+- Forbidden zones are inclusive for integer before-pixel cut coordinates.
+- Example: `(5, 8)` forbids cuts before pixels `5, 6, 7, 8`.
+- In boundary terms, `(5, 8)` forbids cuts between `4|5`, `5|6`, `6|7`, and
+  `7|8`.
+- Float endpoints are allowed. Integer cut before pixel `x` is forbidden when
   `min(x1, x2) <= x <= max(x1, x2)`.
 - Internally this means `lo = ceil(min_endpoint - clearance)` and
   `hi = floor(max_endpoint + clearance)`.
-- Zones outside the image are clipped to internal cut coordinates.
-- Zones that do not contain any valid internal integer cut are ignored.
+- Zones outside the image are clipped to internal before-pixel cut coordinates.
+- Zones that do not contain any valid internal before-pixel cut are ignored.
 - Overlapping, touching, or duplicate zones are accepted and merged internally.
 - Clean non-overlapping input is still preferred because it is easier to review.
 - Unrecognized zone objects fail fast with `TypeError`.
@@ -119,8 +143,8 @@ Normalization rules:
   Search radius around useful anchor positions when an interval is large.
   Rounded to an integer.
 - `exhaustive_scan_limit: int | float = 3000`
-  If a local search has at most this many allowed pixels, check all of them.
-  Rounded to an integer and must be at least `1`.
+  If a local search has at most this many allowed before-pixel coordinates,
+  check all of them. Rounded to an integer and must be at least `1`.
 - `clearance: int | float = 0`
   Extra safety margin around every forbidden zone. Rounded upward to an integer
   so fractional clearance is conservative.
@@ -130,9 +154,10 @@ Normalization rules:
 The function returns a dictionary with these keys:
 
 - `cuts: list[int]`
-  Sorted integer x coordinates for vertical cuts.
+  Sorted before-pixel x coordinates for vertical cuts. A value `x` means the cut
+  is inserted before pixel `x`, between pixels `x - 1` and `x`.
 - `part_widths: list[int]`
-  Width of every resulting image part.
+  Width of every resulting image part under the before-pixel convention.
 - `part_aspect_ratios_H_over_W: list[float]`
   Aspect ratio of every part, using `height / part_width`.
 - `n_parts: int`
@@ -147,9 +172,9 @@ The function returns a dictionary with these keys:
   Lower is better; useful only for comparing candidate results from this
   function.
 - `allowed_intervals: list[tuple[int, int]]`
-  Inclusive integer intervals where cuts are allowed.
+  Inclusive before-pixel intervals where cuts are allowed.
 - `forbidden_zones_used: list[tuple[int, int]]`
-  Normalized, clipped, merged forbidden integer intervals.
+  Normalized, clipped, merged forbidden before-pixel intervals.
 - `parameters: dict`
   Echo of tuning parameters used for the run.
 
@@ -167,5 +192,10 @@ part_widths: [106, 97, 97]
 ```
 
 The natural cuts for `width=300`, `height=100`, `target_ratio=1.0` would be
-near `[100, 200]`, but those coordinates are forbidden, so the algorithm moves
-them to nearby allowed integer pixels.
+before pixels `[100, 200]`, but those before-pixel coordinates are forbidden, so
+the algorithm moves them to nearby allowed before-pixel coordinates.
+
+For the example above:
+
+- `106` means cut before pixel `106`, between pixels `105` and `106`.
+- `203` means cut before pixel `203`, between pixels `202` and `203`.

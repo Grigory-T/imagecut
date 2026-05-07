@@ -22,6 +22,7 @@ class CutParameters(TypedDict):
 
 
 class IntegerCutResult(TypedDict):
+    # Before-pixel coordinates: cut x is between pixels x - 1 and x.
     cuts: list[int]
     part_widths: list[int]
     part_aspect_ratios_H_over_W: list[float]
@@ -49,22 +50,32 @@ def find_good_integer_vertical_cuts(
     clearance: int | float = 0,
 ) -> IntegerCutResult:
     """
-    Fast heuristic integer-pixel solution for vertical image cuts.
+    Fast heuristic integer solution for vertical image cuts.
 
     Public inputs are intentionally tolerant. Width, height, and integer tuning
     parameters may be finite int/float-like values. They are converted to the
-    integer pixel format used by the optimizer before any search runs.
+    integer before-pixel format used by the optimizer before any search runs.
 
     Coordinate convention:
-        Valid internal cuts are integer x coordinates 1, 2, ..., width - 1.
-        A cut at x creates a part width of x - previous_cut.
+        All pixel numbering is zero-based.
+        Pixels are indexed 0, 1, ..., width - 1.
+        A cut value x means "cut before pixel x", so x = 55 cuts between
+        pixels 54 and 55.
+        Valid internal cuts are before-pixel coordinates 1, 2, ..., width - 1.
+        Coordinate 0 is the left image boundary before pixel 0; coordinate
+        width is the right image boundary after the last pixel. Neither is
+        returned as an internal cut.
+        Coordinate width - 1 cuts before the last pixel and is a valid internal
+        cut.
+        A cut before pixel x creates a part width of x - previous_cut.
 
     Forbidden zones:
         Zones can be a sequence of pairs, one pair, mappings such as
         {"start": 5, "end": 8}, or objects with equivalent attributes. Zones
-        are inclusive for integer cut coordinates. Sorting is not required.
-        Pair order is not important. For example, (8, 5) is normalized to
-        (5, 8), forbidding x = 5, 6, 7, 8.
+        are inclusive ranges of pixels before which cuts cannot be inserted.
+        Sorting is not required. Pair order is not important. For example,
+        (8, 5) is normalized to (5, 8), forbidding cuts before pixels
+        5, 6, 7, 8.
 
     Optimization target:
         target_ratio = height / part_width
@@ -562,7 +573,7 @@ def _normalize_forbidden_zones(
         lo_raw = min(a_float, b_float) - clearance
         hi_raw = max(a_float, b_float) + clearance
 
-        # Integer x is forbidden when lo_raw <= x <= hi_raw.
+        # x means "cut before pixel x"; forbid it when lo_raw <= x <= hi_raw.
         lo = max(1, ceil(lo_raw))
         hi = min(width - 1, floor(hi_raw))
 

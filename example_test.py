@@ -28,7 +28,7 @@ def main() -> None:
     print(f"elapsed_ms: {elapsed_ms:.3f}")
     print(f"target_width: {result['target_width']:.6f}")
     print(f"n_parts: {result['n_parts']}")
-    print("cuts:", result["cuts"])
+    print("cuts_before_pixel:", result["cuts"])
     print("part_widths:", result["part_widths"])
     print(
         "part_aspect_ratios_H_over_W:",
@@ -39,6 +39,10 @@ def main() -> None:
     assert result["n_parts"] == 3
     assert result["cuts"] == [106, 203]
     assert result["part_widths"] == [106, 97, 97]
+    assert result["cuts"][0] == 106  # between pixels 105 and 106
+    assert result["cuts"][1] == 203  # between pixels 202 and 203
+    assert result["forbidden_zones_used"] == [(95, 105), (198, 202)]
+    assert result["allowed_intervals"] == [(1, 94), (106, 197), (203, 299)]
     assert all(isinstance(cut, int) for cut in result["cuts"])
     assert all(1 <= cut <= width - 1 for cut in result["cuts"])
     assert result["cuts"] == sorted(result["cuts"])
@@ -75,6 +79,17 @@ def main() -> None:
         (95, 105),
         (198, 202),
     ]
+
+    last_pixel_cut_result = find_good_integer_vertical_cuts(
+        width=10,
+        height=10,
+        forbidden_zones=[(1, 8)],
+        target_ratio=10.0,
+        part_count_radius=9,
+    )
+    assert last_pixel_cut_result["cuts"] == [9]
+    assert last_pixel_cut_result["allowed_intervals"] == [(9, 9)]
+    assert last_pixel_cut_result["part_widths"] == [9, 1]
 
     max_ratio_error = max(
         abs(ratio - target_ratio)
