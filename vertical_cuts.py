@@ -272,6 +272,12 @@ def find_good_integer_vertical_cuts(
             + max_log_error_weight * max_abs_error
         )
 
+    def score_centers(cuts: list[int]) -> float:
+        if not cuts:
+            return 0.0
+
+        return sum(center_penalty(x) for x in cuts) / len(cuts)
+
     def part_widths_for_cuts(cuts: list[int]) -> list[int]:
         points = [0, *cuts, W]
         return [
@@ -283,7 +289,7 @@ def find_good_integer_vertical_cuts(
         part_widths = part_widths_for_cuts(cuts)
 
         value = score_widths(part_widths)
-        value += center_weight * sum(center_penalty(x) for x in cuts)
+        value += center_weight * score_centers(cuts)
 
         ratios = [H / w for w in part_widths]
 
@@ -473,6 +479,7 @@ def find_good_integer_vertical_cuts(
                         if cut_index != i
                     )
                     n_parts = len(part_widths)
+                    n_cuts = len(cuts)
 
                     def local_cost(x: int) -> float:
                         left_error = log_width_error(x - left)
@@ -492,7 +499,10 @@ def find_good_integer_vertical_cuts(
                             mean_log_square_weight * mean_square
                             + max_log_error_weight * max_abs_error
                             + center_weight
-                            * (static_center_sum + center_penalty(x))
+                            * (
+                                (static_center_sum + center_penalty(x))
+                                / n_cuts
+                            )
                         )
 
                     best_x = current

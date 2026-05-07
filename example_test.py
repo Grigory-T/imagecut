@@ -51,6 +51,34 @@ def main() -> None:
     assert all(1 <= cut <= width - 1 for cut in result["cuts"])
     assert result["cuts"] == sorted(result["cuts"])
 
+    log_errors = [
+        log(w / result["target_width"])
+        for w in result["part_widths"]
+    ]
+    width_loss = (
+        sum(e * e for e in log_errors) / len(log_errors)
+        + max(abs(e) for e in log_errors)
+    )
+    center_penalties = []
+
+    for cut in result["cuts"]:
+        interval = next(
+            (lo, hi)
+            for lo, hi in result["allowed_intervals"]
+            if lo <= cut <= hi
+        )
+        lo, hi = interval
+        midpoint = (lo + hi) / 2
+        half_width = (hi - lo) / 2
+        center_penalties.append(((cut - midpoint) / half_width) ** 2)
+
+    expected_objective = (
+        width_loss
+        + result["parameters"]["center_weight"]
+        * (sum(center_penalties) / len(center_penalties))
+    )
+    assert abs(result["objective"] - expected_objective) < 1e-12
+
     for cut in result["cuts"]:
         assert not any(lo <= cut <= hi for lo, hi in forbidden_zones)
         assert any(lo <= cut <= hi for lo, hi in result["allowed_intervals"])

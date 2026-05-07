@@ -176,13 +176,16 @@ The full objective is:
 objective =
     width_loss
     +
-    center_weight * sum(center_penalty(cut_i))
+    center_weight * mean(center_penalty(cut_i))
 ```
 
 The mean squared log term keeps parts good on average. The max absolute log term
 protects the worst part, so one very bad segment is penalized even if the
 average is acceptable. The log ratio makes `50` vs target `100` and `200` vs
 target `100` symmetric multiplicative errors.
+
+The center term is also averaged, not summed, so it stays comparable across
+solutions with different numbers of cuts. With no cuts, the center term is `0`.
 
 ## Output Structure
 
