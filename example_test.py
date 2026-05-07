@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from time import perf_counter
+from types import SimpleNamespace
 
 from vertical_cuts import find_good_integer_vertical_cuts
 
@@ -56,6 +57,24 @@ def main() -> None:
         center_weight=1e-4,
     )
     assert normalized_result["cuts"] == result["cuts"]
+
+    flexible_input_result = find_good_integer_vertical_cuts(
+        width=300.2,
+        height=100.1,
+        forbidden_zones={
+            "zones": [
+                {"start": 95.0, "end": 105.0},
+                SimpleNamespace(x1=202.0, x2=198.0),
+            ],
+        },
+        target_ratio=target_ratio,
+        center_weight=1e-4,
+    )
+    assert flexible_input_result["cuts"] == result["cuts"]
+    assert flexible_input_result["forbidden_zones_used"] == [
+        (95, 105),
+        (198, 202),
+    ]
 
     max_ratio_error = max(
         abs(ratio - target_ratio)

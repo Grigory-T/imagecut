@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Iterable as IterableABC
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from math import ceil, floor, isfinite, log
-from operator import index
-from typing import Any, Iterable, Literal, Optional, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 
 Preference = Literal["nearest", "left", "right"]
@@ -36,28 +37,34 @@ class IntegerCutResult(TypedDict):
 
 def find_good_integer_vertical_cuts(
     *,
-    width: int,
-    height: int,
-    forbidden_zones: Iterable[tuple[float, float]],
+    width: int | float,
+    height: int | float,
+    forbidden_zones: Any,
     target_ratio: float,
     center_weight: float = 1e-4,
-    part_count_radius: int = 3,
-    max_passes: int = 12,
-    local_radius: int = 64,
-    exhaustive_scan_limit: int = 3000,
-    clearance: int = 0,
+    part_count_radius: int | float = 3,
+    max_passes: int | float = 12,
+    local_radius: int | float = 64,
+    exhaustive_scan_limit: int | float = 3000,
+    clearance: int | float = 0,
 ) -> IntegerCutResult:
     """
     Fast heuristic integer-pixel solution for vertical image cuts.
+
+    Public inputs are intentionally tolerant. Width, height, and integer tuning
+    parameters may be finite int/float-like values. They are converted to the
+    integer pixel format used by the optimizer before any search runs.
 
     Coordinate convention:
         Valid internal cuts are integer x coordinates 1, 2, ..., width - 1.
         A cut at x creates a part width of x - previous_cut.
 
     Forbidden zones:
-        Zones are inclusive for integer cut coordinates. Sorting is not
-        required. Pair order is not important. For example, (8, 5) is
-        normalized to (5, 8), forbidding x = 5, 6, 7, 8.
+        Zones can be a sequence of pairs, one pair, mappings such as
+        {"start": 5, "end": 8}, or objects with equivalent attributes. Zones
+        are inclusive for integer cut coordinates. Sorting is not required.
+        Pair order is not important. For example, (8, 5) is normalized to
+        (5, 8), forbidding x = 5, 6, 7, 8.
 
     Optimization target:
         target_ratio = height / part_width
@@ -66,16 +73,16 @@ def find_good_integer_vertical_cuts(
     This is a fast multi-start local search, not an exact global optimizer.
     """
 
-    W = _as_int("width", width)
-    H = _as_int("height", height)
-    part_count_radius = _as_int("part_count_radius", part_count_radius)
-    max_passes = _as_int("max_passes", max_passes)
-    local_radius = _as_int("local_radius", local_radius)
-    exhaustive_scan_limit = _as_int(
+    W = _as_pixel_count("width", width)
+    H = _as_pixel_count("height", height)
+    part_count_radius = _as_rounded_int("part_count_radius", part_count_radius)
+    max_passes = _as_rounded_int("max_passes", max_passes)
+    local_radius = _as_rounded_int("local_radius", local_radius)
+    exhaustive_scan_limit = _as_rounded_int(
         "exhaustive_scan_limit",
         exhaustive_scan_limit,
     )
-    clearance = _as_int("clearance", clearance)
+    clearance = _as_clearance("clearance", clearance)
     target_ratio = _as_finite_float("target_ratio", target_ratio)
     center_weight = _as_finite_float("center_weight", center_weight)
 
@@ -492,34 +499,64 @@ def find_good_integer_vertical_cuts(
     return best_result
 
 
-def _as_int(name: str, value: Any) -> int:
-    if isinstance(value, bool):
-        raise TypeError(f"{name} must be an int, not bool")
+def _as_pixel_count(name: str, value: Any) -> int:
+    value_float = _as_finite_float(name, value)
 
-    try:
-        return index(value)
-    except TypeError as exc:
-        raise TypeError(f"{name} must be an int") from exc
+    if value_float <= 0:
+        raise ValueError(f"{name} must be positive")
+
+    return _round_half_up(value_float)
+
+
+def _as_rounded_int(name: str, value: Any) -> int:
+    value_float = _as_finite_float(name, value)
+
+    if value_float < 0:
+        raise ValueError(f"{name} must be non-negative")
+
+    return _round_half_up(value_float)
+
+
+def _as_clearance(name: str, value: Any) -> int:
+    value_float = _as_finite_float(name, value)
+
+    if value_float < 0:
+        raise ValueError(f"{name} must be non-negative")
+
+    return ceil(value_float)
+
+
+def _round_half_up(value: float) -> int:
+    if value >= 0:
+        return floor(value + 0.5)
+
+    return ceil(value - 0.5)
 
 
 def _as_finite_float(name: str, value: Any) -> float:
-    value = float(value)
+    if isinstance(value, bool):
+        raise TypeError(f"{name} must be numeric, not bool")
 
-    if not isfinite(value):
+    try:
+        value_float = float(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{name} must be numeric") from exc
+
+    if not isfinite(value_float):
         raise ValueError(f"{name} must be finite")
 
-    return value
+    return value_float
 
 
 def _normalize_forbidden_zones(
     *,
     width: int,
-    forbidden_zones: Iterable[tuple[float, float]],
+    forbidden_zones: Any,
     clearance: int,
 ) -> list[tuple[int, int]]:
     forbidden: list[tuple[int, int]] = []
 
-    for a, b in forbidden_zones:
+    for a, b in _iter_zone_pairs(forbidden_zones):
         a_float = _as_finite_float("forbidden zone coordinate", a)
         b_float = _as_finite_float("forbidden zone coordinate", b)
         lo_raw = min(a_float, b_float) - clearance
@@ -543,6 +580,150 @@ def _normalize_forbidden_zones(
             merged[-1][1] = max(merged[-1][1], hi)
 
     return [(lo, hi) for lo, hi in merged]
+
+
+def _iter_zone_pairs(forbidden_zones: Any) -> IterableABC[tuple[Any, Any]]:
+    if forbidden_zones is None:
+        return
+
+    single_pair = _zone_pair_from_item(forbidden_zones)
+
+    if single_pair is not None:
+        yield single_pair
+        return
+
+    if isinstance(forbidden_zones, Mapping):
+        for key in ("zones", "forbidden_zones", "ranges", "intervals"):
+            if key in forbidden_zones:
+                yield from _iter_zone_pairs(forbidden_zones[key])
+                return
+
+        for value in forbidden_zones.values():
+            pair = _zone_pair_from_item(value)
+
+            if pair is None:
+                raise TypeError(f"cannot read forbidden zone from {value!r}")
+
+            yield pair
+
+        return
+
+    if isinstance(forbidden_zones, (str, bytes)):
+        raise TypeError("forbidden_zones must not be a string")
+
+    if not isinstance(forbidden_zones, IterableABC):
+        raise TypeError("forbidden_zones must be a zone or iterable of zones")
+
+    for item in forbidden_zones:
+        pair = _zone_pair_from_item(item)
+
+        if pair is None:
+            raise TypeError(f"cannot read forbidden zone from {item!r}")
+
+        yield pair
+
+
+def _zone_pair_from_item(item: Any) -> Optional[tuple[Any, Any]]:
+    if isinstance(item, Mapping):
+        pair = _pair_from_mapping(item)
+
+        if pair is not None:
+            return pair
+
+        return None
+
+    pair = _pair_from_attributes(item)
+
+    if pair is not None:
+        return pair
+
+    if isinstance(item, (str, bytes)):
+        return None
+
+    pair = _pair_from_indexable(item)
+
+    if pair is not None:
+        return pair
+
+    return None
+
+
+def _can_float(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+
+    return True
+
+
+def _pair_from_indexable(item: Any) -> Optional[tuple[Any, Any]]:
+    if isinstance(item, (str, bytes)):
+        return None
+
+    if not isinstance(item, Sequence) and not (
+        hasattr(item, "__len__")
+        and hasattr(item, "__getitem__")
+    ):
+        return None
+
+    try:
+        if len(item) != 2:
+            return None
+
+        left = item[0]
+        right = item[1]
+    except (TypeError, KeyError, IndexError):
+        return None
+
+    if _can_float(left) and _can_float(right):
+        return left, right
+
+    return None
+
+
+def _pair_from_mapping(mapping: Mapping[Any, Any]) -> Optional[tuple[Any, Any]]:
+    for left_key, right_key in (
+        ("start", "end"),
+        ("left", "right"),
+        ("lo", "hi"),
+        ("low", "high"),
+        ("min", "max"),
+        ("x1", "x2"),
+        ("from", "to"),
+        ("a", "b"),
+    ):
+        if left_key in mapping and right_key in mapping:
+            left = mapping[left_key]
+            right = mapping[right_key]
+
+            if _can_float(left) and _can_float(right):
+                return left, right
+
+    return None
+
+
+def _pair_from_attributes(item: Any) -> Optional[tuple[Any, Any]]:
+    for left_name, right_name in (
+        ("start", "end"),
+        ("left", "right"),
+        ("lo", "hi"),
+        ("low", "high"),
+        ("min", "max"),
+        ("x1", "x2"),
+        ("a", "b"),
+    ):
+        if hasattr(item, left_name) and hasattr(item, right_name):
+            left = getattr(item, left_name)
+            right = getattr(item, right_name)
+
+            if _can_float(left) and _can_float(right):
+                return left, right
+
+    return None
 
 
 def _build_allowed_intervals(
