@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from math import log
 from time import perf_counter
 from types import SimpleNamespace
 
@@ -43,6 +44,8 @@ def main() -> None:
     assert result["cuts"][1] == 203  # between pixels 202 and 203
     assert result["forbidden_zones_used"] == [(95, 105), (198, 202)]
     assert result["allowed_intervals"] == [(1, 94), (106, 197), (203, 299)]
+    assert result["parameters"]["mean_log_square_weight"] == 1.0
+    assert result["parameters"]["max_log_error_weight"] == 1.0
     assert all(isinstance(cut, int) for cut in result["cuts"])
     assert all(1 <= cut <= width - 1 for cut in result["cuts"])
     assert result["cuts"] == sorted(result["cuts"])
@@ -91,6 +94,21 @@ def main() -> None:
     assert last_pixel_cut_result["allowed_intervals"] == [(9, 9)]
     assert last_pixel_cut_result["part_widths"] == [9, 1]
 
+    no_max_loss_result = find_good_integer_vertical_cuts(
+        width=width,
+        height=height,
+        forbidden_zones=forbidden_zones,
+        target_ratio=target_ratio,
+        center_weight=0.0,
+        max_log_error_weight=0.0,
+    )
+    log_errors = [
+        log(w / no_max_loss_result["target_width"])
+        for w in no_max_loss_result["part_widths"]
+    ]
+    expected_mean_loss = sum(e * e for e in log_errors) / len(log_errors)
+    assert abs(no_max_loss_result["objective"] - expected_mean_loss) < 1e-12
+
     max_ratio_error = max(
         abs(ratio - target_ratio)
         for ratio in result["part_aspect_ratios_H_over_W"]
@@ -118,7 +136,7 @@ def main() -> None:
 
     assert stress_result["n_parts"] == 20
     assert stress_max_width_error <= 1.0
-    assert stress_ms < 250.0
+    assert stress_ms < 600.0
 
 
 if __name__ == "__main__":

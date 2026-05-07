@@ -17,6 +17,7 @@ result: IntegerCutResult = find_good_integer_vertical_cuts(
     height=100.0,
     forbidden_zones=[(95, 105), (198, 202)],
     target_ratio=1.0,
+    max_log_error_weight=1.0,
 )
 
 print(result["cuts"])
@@ -134,6 +135,13 @@ Normalization rules:
 - `center_weight: float = 1e-4`
   Secondary weight for preferring the middle of the allowed interval containing
   a cut. Use `0.0` to disable this preference.
+- `mean_log_square_weight: float = 1.0`
+  Weight for the average squared multiplicative width error:
+  `mean(log(part_width / target_width)^2)`.
+- `max_log_error_weight: float = 1.0`
+  Weight for the worst part error:
+  `max(abs(log(part_width / target_width)))`. Increase this when the main goal
+  is to avoid any very bad part.
 - `part_count_radius: int | float = 3`
   Number of nearby part counts to try around the ideal count. Rounded to an
   integer.
@@ -148,6 +156,33 @@ Normalization rules:
 - `clearance: int | float = 0`
   Extra safety margin around every forbidden zone. Rounded upward to an integer
   so fractional clearance is conservative.
+
+## Loss Function
+
+The width-quality part of the objective is:
+
+```text
+width_loss =
+    mean_log_square_weight
+    * mean(log(part_width_i / target_width)^2)
+    +
+    max_log_error_weight
+    * max(abs(log(part_width_i / target_width)))
+```
+
+The full objective is:
+
+```text
+objective =
+    width_loss
+    +
+    center_weight * sum(center_penalty(cut_i))
+```
+
+The mean squared log term keeps parts good on average. The max absolute log term
+protects the worst part, so one very bad segment is penalized even if the
+average is acceptable. The log ratio makes `50` vs target `100` and `200` vs
+target `100` symmetric multiplicative errors.
 
 ## Output Structure
 
@@ -169,8 +204,8 @@ The function returns a dictionary with these keys:
 - `target_ratio_H_over_W: float`
   Echo of the requested target ratio.
 - `objective: float`
-  Lower is better; useful only for comparing candidate results from this
-  function.
+  Combined loss value. Lower is better; useful only for comparing candidate
+  results from this function with the same loss parameters.
 - `allowed_intervals: list[tuple[int, int]]`
   Inclusive before-pixel intervals where cuts are allowed.
 - `forbidden_zones_used: list[tuple[int, int]]`

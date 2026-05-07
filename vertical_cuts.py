@@ -14,6 +14,8 @@ Direction = Literal["ltr", "rtl"]
 
 class CutParameters(TypedDict):
     center_weight: float
+    mean_log_square_weight: float
+    max_log_error_weight: float
     part_count_radius: int
     max_passes: int
     local_radius: int
@@ -43,6 +45,8 @@ def find_good_integer_vertical_cuts(
     forbidden_zones: Any,
     target_ratio: float,
     center_weight: float = 1e-4,
+    mean_log_square_weight: float = 1.0,
+    max_log_error_weight: float = 1.0,
     part_count_radius: int | float = 3,
     max_passes: int | float = 12,
     local_radius: int | float = 64,
@@ -80,6 +84,9 @@ def find_good_integer_vertical_cuts(
     Optimization target:
         target_ratio = height / part_width
         target_width = height / target_ratio
+        width_loss =
+            mean_log_square_weight * mean(log(width / target_width)^2)
+            + max_log_error_weight * max(abs(log(width / target_width)))
 
     This is a fast multi-start local search, not an exact global optimizer.
     """
@@ -96,6 +103,14 @@ def find_good_integer_vertical_cuts(
     clearance = _as_clearance("clearance", clearance)
     target_ratio = _as_finite_float("target_ratio", target_ratio)
     center_weight = _as_finite_float("center_weight", center_weight)
+    mean_log_square_weight = _as_finite_float(
+        "mean_log_square_weight",
+        mean_log_square_weight,
+    )
+    max_log_error_weight = _as_finite_float(
+        "max_log_error_weight",
+        max_log_error_weight,
+    )
 
     if W <= 0:
         raise ValueError("width must be positive")
@@ -105,6 +120,10 @@ def find_good_integer_vertical_cuts(
         raise ValueError("target_ratio must be positive")
     if center_weight < 0:
         raise ValueError("center_weight must be non-negative")
+    if mean_log_square_weight < 0:
+        raise ValueError("mean_log_square_weight must be non-negative")
+    if max_log_error_weight < 0:
+        raise ValueError("max_log_error_weight must be non-negative")
     if part_count_radius < 0:
         raise ValueError("part_count_radius must be non-negative")
     if max_passes < 0:
@@ -219,11 +238,11 @@ def find_good_integer_vertical_cuts(
         raise ValueError("preference must be 'nearest', 'left', or 'right'")
 
     @lru_cache(maxsize=None)
-    def part_loss(part_width: int) -> float:
+    def log_width_error(part_width: int) -> float:
         if part_width <= 0:
-            return 1e100
+            return 1e50
 
-        return log(part_width / target_width) ** 2
+        return log(part_width / target_width)
 
     @lru_cache(maxsize=None)
     def center_penalty(x: int) -> float:
@@ -242,14 +261,28 @@ def find_good_integer_vertical_cuts(
 
         return ((x - midpoint) / half_width) ** 2
 
-    def objective(cuts: list[int]) -> tuple[float, list[int], list[float]]:
+    def score_widths(part_widths: list[int]) -> float:
+        errors = [log_width_error(w) for w in part_widths]
+
+        mean_square = sum(e * e for e in errors) / len(errors)
+        max_abs_error = max(abs(e) for e in errors)
+
+        return (
+            mean_log_square_weight * mean_square
+            + max_log_error_weight * max_abs_error
+        )
+
+    def part_widths_for_cuts(cuts: list[int]) -> list[int]:
         points = [0, *cuts, W]
-        part_widths = [
+        return [
             points[i + 1] - points[i]
             for i in range(len(points) - 1)
         ]
 
-        value = sum(part_loss(w) for w in part_widths)
+    def objective(cuts: list[int]) -> tuple[float, list[int], list[float]]:
+        part_widths = part_widths_for_cuts(cuts)
+
+        value = score_widths(part_widths)
         value += center_weight * sum(center_penalty(x) for x in cuts)
 
         ratios = [H / w for w in part_widths]
@@ -407,11 +440,43 @@ def find_good_integer_vertical_cuts(
                     if not candidates:
                         continue
 
+                    part_widths = part_widths_for_cuts(cuts)
+                    static_errors = [
+                        log_width_error(w)
+                        for part_index, w in enumerate(part_widths)
+                        if part_index not in (i, i + 1)
+                    ]
+                    static_square_sum = sum(e * e for e in static_errors)
+                    static_max_abs = max(
+                        [abs(e) for e in static_errors],
+                        default=0.0,
+                    )
+                    static_center_sum = sum(
+                        center_penalty(cut)
+                        for cut_index, cut in enumerate(cuts)
+                        if cut_index != i
+                    )
+                    n_parts = len(part_widths)
+
                     def local_cost(x: int) -> float:
+                        left_error = log_width_error(x - left)
+                        right_error = log_width_error(right - x)
+                        mean_square = (
+                            static_square_sum
+                            + left_error * left_error
+                            + right_error * right_error
+                        ) / n_parts
+                        max_abs_error = max(
+                            static_max_abs,
+                            abs(left_error),
+                            abs(right_error),
+                        )
+
                         return (
-                            part_loss(x - left)
-                            + part_loss(right - x)
-                            + center_weight * center_penalty(x)
+                            mean_log_square_weight * mean_square
+                            + max_log_error_weight * max_abs_error
+                            + center_weight
+                            * (static_center_sum + center_penalty(x))
                         )
 
                     best_x = current
@@ -493,6 +558,8 @@ def find_good_integer_vertical_cuts(
                 "forbidden_zones_used": forbidden_intervals,
                 "parameters": {
                     "center_weight": center_weight,
+                    "mean_log_square_weight": mean_log_square_weight,
+                    "max_log_error_weight": max_log_error_weight,
                     "part_count_radius": part_count_radius,
                     "max_passes": max_passes,
                     "local_radius": local_radius,
