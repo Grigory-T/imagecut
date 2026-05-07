@@ -289,6 +289,22 @@ def find_good_integer_vertical_cuts(
 
         return value, part_widths, ratios
 
+    def validate_cuts_are_allowed(cuts: list[int]) -> None:
+        previous = 0
+
+        for cut in cuts:
+            if cut <= previous or cut >= W:
+                raise RuntimeError(
+                    f"internal error: invalid cut order or boundary: {cut}"
+                )
+
+            if not is_allowed(cut):
+                raise RuntimeError(
+                    f"internal error: cut before pixel {cut} is forbidden"
+                )
+
+            previous = cut
+
     def make_initial_cuts(
         n_parts: int,
         *,
@@ -543,6 +559,7 @@ def find_good_integer_vertical_cuts(
             seen_starts.add(key)
 
             cuts = improve(init)
+            validate_cuts_are_allowed(cuts)
             score, part_widths, ratios = objective(cuts)
 
             result: IntegerCutResult = {

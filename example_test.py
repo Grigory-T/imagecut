@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import log
+from random import Random
 from time import perf_counter
 from types import SimpleNamespace
 
@@ -52,6 +53,7 @@ def main() -> None:
 
     for cut in result["cuts"]:
         assert not any(lo <= cut <= hi for lo, hi in forbidden_zones)
+        assert any(lo <= cut <= hi for lo, hi in result["allowed_intervals"])
 
     normalized_result = find_good_integer_vertical_cuts(
         width=width,
@@ -93,6 +95,40 @@ def main() -> None:
     assert last_pixel_cut_result["cuts"] == [9]
     assert last_pixel_cut_result["allowed_intervals"] == [(9, 9)]
     assert last_pixel_cut_result["part_widths"] == [9, 1]
+
+    rng = Random(7)
+
+    for _ in range(80):
+        fuzz_width = rng.randint(20, 250)
+        fuzz_height = rng.randint(20, 120)
+        fuzz_zones = []
+
+        for _ in range(rng.randint(0, 20)):
+            a = rng.uniform(-10, fuzz_width + 10)
+            b = a + rng.uniform(-5, 30)
+
+            if rng.choice([True, False]):
+                a, b = b, a
+
+            fuzz_zones.append((a, b))
+
+        fuzz_result = find_good_integer_vertical_cuts(
+            width=fuzz_width,
+            height=fuzz_height,
+            forbidden_zones=fuzz_zones,
+            target_ratio=rng.uniform(0.5, 3.0),
+        )
+
+        for cut in fuzz_result["cuts"]:
+            assert 1 <= cut <= fuzz_width - 1
+            assert any(
+                lo <= cut <= hi
+                for lo, hi in fuzz_result["allowed_intervals"]
+            )
+            assert all(
+                not (lo <= cut <= hi)
+                for lo, hi in fuzz_result["forbidden_zones_used"]
+            )
 
     no_max_loss_result = find_good_integer_vertical_cuts(
         width=width,
